@@ -1,2 +1,51 @@
+# Python Virtual Environment
+.venv/
 venv/
-node_modules/
+env/
+ENV/
+
+# Environment Variables (contains API keys!)
+.env
+.env.local
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Generated Data / Databases
+chroma_db/
+faiss_store/
+data/vector_store/
+*.db
+*.sqlite
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Build / Distribution
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log
+logs/
+
+# Temporary Files
+*.tmp
+*.temp
