@@ -23,25 +23,7 @@ class FaissVectorStore:
         emb_pipe = EmbeddingPipeline(model_name=self.embedding_model, chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
         chunks = emb_pipe.chunk_documents(documents)
         embeddings = emb_pipe.embed_chunks(chunks)
-        
-        # Preserve all metadata including source file and page
-        metadatas = []
-        for chunk in chunks:
-            # Extract filename from full path
-            source_path = chunk.metadata.get('source', 'unknown')
-            if source_path != 'unknown':
-                source_file = os.path.basename(source_path)
-            else:
-                source_file = 'unknown'
-            
-            metadata = {
-                "text": chunk.page_content,
-                "source": source_path,
-                "source_file": source_file,
-                "page": chunk.metadata.get('page', 'unknown')
-            }
-            metadatas.append(metadata)
-        
+        metadatas = [{"text": chunk.page_content} for chunk in chunks]
         self.add_embeddings(np.array(embeddings).astype('float32'), metadatas)
         self.save()
         print(f"[INFO] Vector store built and saved to {self.persist_dir}")

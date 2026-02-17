@@ -147,8 +147,17 @@ class AdvancedRAGPipeline:
                 'preview': doc['content'][:120] + '...' if len(doc['content']) > 120 else doc['content']
             } for doc in results]
             
-            # Create prompt
-            prompt = f"""Use the following context to answer the question concisely.\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:"""
+            # Create prompt - request DETAILED answers with emphasis on numbers/data
+            prompt = f"""Use the following context to answer the question in detail. Provide a comprehensive answer with all relevant information.
+
+IMPORTANT: If the context contains numbers, statistics, percentages, dates, amounts, or structured data (tables/matrices), ALWAYS include them in your answer. Prioritize specific numerical details.
+
+Context:
+{context}
+
+Question: {question}
+
+Answer (provide a detailed response with all relevant numbers and data):"""
             
             # Optional streaming (demonstration - prints prompt in chunks)
             if stream:
