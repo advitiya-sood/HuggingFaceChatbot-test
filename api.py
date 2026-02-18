@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
@@ -20,13 +21,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Build FAISS index on startup if it doesn't exist
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Build FAISS index on startup if needed, then start serving."""
+    faiss_index = "faiss_store/faiss.index"
+    faiss_meta = "faiss_store/metadata.pkl"
+    if not (os.path.exists(faiss_index) and os.path.exists(faiss_meta)):
+        logger.info("FAISS index not found. Building from documents in data/...")
+        try:
+            from src.data_loader import load_all_documents
+            from src.vectorstore import FaissVectorStore
+            docs = load_all_documents("data")
+            store = FaissVectorStore("faiss_store")
+            store.build_from_documents(docs)
+            logger.info("FAISS index built successfully!")
+        except Exception as e:
+            logger.error(f"Failed to build FAISS index: {e}")
+    else:
+        logger.info("FAISS index found. Skipping rebuild.")
+    yield  # Server is now running
+
 # Initialize FastAPI app
 app = FastAPI(
     title="RAG Chatbot API",
     description="Advanced RAG Pipeline API with citations, history, and summarization",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
 # CORS configuration
