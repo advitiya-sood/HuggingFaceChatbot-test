@@ -21,6 +21,8 @@ faiss_store/
 data/vector_store/
 *.db
 *.sqlite
+# NOTE: PDFs in data/ ARE tracked so Render can build the index
+
 
 # Jupyter Notebook Checkpoints
 .ipynb_checkpoints/
