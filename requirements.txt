@@ -13,12 +13,10 @@ langchain-text-splitters==0.0.1
 langchain-groq==0.0.1
 
 # Vector Store & Embeddings
-faiss-cpu==1.7.4
+faiss-cpu==1.13.0
 sentence-transformers==2.2.2
 
 # Document Loaders
 pypdf==3.17.0
 python-docx==1.1.0
 openpyxl==3.1.2
-docx2txt==0.8
-unstructured==0.10.30
