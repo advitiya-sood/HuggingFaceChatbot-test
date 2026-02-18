@@ -17,11 +17,12 @@ __pycache__/
 
 # Generated Data / Databases
 chroma_db/
-faiss_store/
+# faiss_store/ is intentionally tracked - pre-built index for Render deployment
 data/vector_store/
 *.db
 *.sqlite
 # NOTE: PDFs in data/ ARE tracked so Render can build the index
+
 
 
 # Jupyter Notebook Checkpoints
