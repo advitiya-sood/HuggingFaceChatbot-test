@@ -8,6 +8,10 @@ from datetime import datetime
 import logging
 import os
 from dotenv import load_dotenv
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from src.search import RAGSearch, AdvancedRAGPipeline
 
@@ -63,6 +67,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate Limiter Configuration
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
 # Initialize RAG pipelines (singleton pattern)
 basic_rag = None
 advanced_rag = None
@@ -91,9 +101,10 @@ class BasicQueryRequest(BaseModel):
 class AdvancedQueryRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=500, description="User's question")
     top_k: int = Field(default=5, ge=1, le=10, description="Number of documents to retrieve")
-    min_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Minimum similarity score")
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Minimum similarity score threshold")
     stream: bool = Field(default=False, description="Enable streaming (demonstration)")
-    summarize: bool = Field(default=False, description="Generate 2-sentence summary")
+    summarize: bool = Field(default=False, description="Generate summary")
+    conversation_history: List[Dict[str, str]] = Field(default=[], description="Previous turns: [{role, content}]")
 
 class BasicQueryResponse(BaseModel):
     question: str
@@ -111,6 +122,7 @@ class AdvancedQueryResponse(BaseModel):
     answer: str
     sources: List[SourceInfo]
     summary: Optional[str]
+    follow_up_questions: List[str] = []
     timestamp: str
 
 class HistoryResponse(BaseModel):
@@ -154,7 +166,8 @@ async def health_check():
 
 # Basic RAG endpoint
 @app.post("/api/query/basic", response_model=BasicQueryResponse, tags=["Query"])
-async def query_basic(request: BasicQueryRequest):
+@limiter.limit("20/minute")
+async def query_basic(request: Request, body: BasicQueryRequest):
     """
     Basic RAG query endpoint - returns simple answer.
     
@@ -162,13 +175,13 @@ async def query_basic(request: BasicQueryRequest):
     - **top_k**: Number of documents to retrieve (1-10)
     """
     try:
-        logger.info(f"Basic query received: {request.question}")
+        logger.info(f"Basic query received: {body.question}")
         
         rag = get_basic_rag()
-        answer = rag.search_and_summarize(request.question, top_k=request.top_k)
+        answer = rag.search_and_summarize(body.question, top_k=body.top_k)
         
         return {
-            "question": request.question,
+            "question": body.question,
             "answer": answer,
             "timestamp": datetime.now().isoformat()
         }
@@ -179,7 +192,8 @@ async def query_basic(request: BasicQueryRequest):
 
 # Advanced RAG endpoint
 @app.post("/api/query/advanced", response_model=AdvancedQueryResponse, tags=["Query"])
-async def query_advanced(request: AdvancedQueryRequest):
+@limiter.limit("10/minute")
+async def query_advanced(request: Request, body: AdvancedQueryRequest):
     """
     Advanced RAG query endpoint - returns answer with citations, sources, and optional summary.
     
@@ -190,15 +204,16 @@ async def query_advanced(request: AdvancedQueryRequest):
     - **summarize**: Generate 2-sentence summary
     """
     try:
-        logger.info(f"Advanced query received: {request.question}")
+        logger.info(f"Advanced query received: {body.question}")
         
         rag = get_advanced_rag()
         result = rag.query(
-            question=request.question,
-            top_k=request.top_k,
-            min_score=request.min_score,
-            stream=request.stream,
-            summarize=request.summarize
+            question=body.question,
+            top_k=body.top_k,
+            min_score=body.min_score,
+            stream=body.stream,
+            summarize=body.summarize,
+            conversation_history=body.conversation_history
         )
         
         return {
@@ -206,6 +221,7 @@ async def query_advanced(request: AdvancedQueryRequest):
             "answer": result['answer'],
             "sources": result['sources'],
             "summary": result['summary'],
+            "follow_up_questions": result.get('follow_up_questions', []),
             "timestamp": datetime.now().isoformat()
         }
     

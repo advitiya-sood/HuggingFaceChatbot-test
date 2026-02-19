@@ -102,43 +102,74 @@ class AdvancedRAGPipeline:
         
         return formatted_results
     
-    def query(self, question: str, top_k: int = 5, min_score: float = 0.0, stream: bool = False, summarize: bool = False) -> Dict[str, Any]:
+    # Greetings and generic patterns that don't need RAG
+    OUT_OF_SCOPE_PATTERNS = [
+        "hello", "hi", "hey", "good morning", "good afternoon", "good evening",
+        "how are you", "what's up", "whats up", "thanks", "thank you", "bye",
+        "goodbye", "ok", "okay", "cool", "great", "nice", "sure", "help",
+        "what can you do", "what do you do", "who are you", "what are you"
+    ]
+
+    def _is_out_of_scope(self, question: str) -> bool:
+        """Check if the question is a greeting or off-topic query that doesn't need RAG."""
+        q = question.strip().lower().rstrip('?!.')
+        # Exact or near-exact match with common phrases
+        if q in self.OUT_OF_SCOPE_PATTERNS:
+            return True
+        # Very short questions (1-2 words) that aren't domain queries
+        words = q.split()
+        if len(words) <= 2 and not any(kw in q for kw in ["leave", "policy", "salary", "hr", "ceo", "benefit", "vacation", "medical", "bonus"]):
+            return True
+        return False
+
+    def _get_out_of_scope_response(self, question: str) -> str:
+        """Generate a friendly response for out-of-scope questions."""
+        prompt = f"""You are a helpful HR/company policy assistant. The user said: "{question}"
+
+This is a greeting or general question, not a policy query. Respond briefly and naturally, and let them know you can help with company policies, HR documents, leave policies, benefits, or any document-related questions."""
+        response = self.llm.invoke([prompt])
+        return response.content
+
+    def query(self, question: str, top_k: int = 5, min_score: float = 0.0, stream: bool = False, summarize: bool = False, conversation_history: list = None) -> Dict[str, Any]:
         """
-        Execute an advanced RAG query with optional streaming and summarization.
-        
+        Execute an advanced RAG query with conversation memory and relevance filtering.
+
         Args:
             question: The user's question
             top_k: Number of top documents to retrieve
-            min_score: Minimum similarity score threshold (0.0 to 1.0)
+            min_score: Minimum similarity score threshold — chunks below this are dropped
             stream: Whether to stream the prompt (for demonstration)
-            summarize: Whether to generate a 2-sentence summary
-        
+            summarize: Whether to generate a summary
+            conversation_history: List of {role, content} dicts from previous turns
+
         Returns:
-            Dictionary containing:
-            - question: The original question
-            - answer: Answer with citations
-            - sources: List of source documents with metadata
-            - summary: Optional 2-sentence summary
-            - history: Complete query history
+            Dictionary with question, answer, sources, summary, history
         """
+        if conversation_history is None:
+            conversation_history = []
+
+        # Keep only last 3 turns (6 messages: 3 user + 3 assistant) to stay within token limits
+        recent_history = conversation_history[-6:]
+
+        # --- Out-of-scope detection ---
+        if self._is_out_of_scope(question):
+            answer = self._get_out_of_scope_response(question)
+            self.history.append({'question': question, 'answer': answer, 'sources': [], 'summary': None})
+            return {'question': question, 'answer': answer, 'sources': [], 'summary': None, 'history': self.history}
+
         # Retrieve relevant documents from FAISS
         raw_results = self.vectorstore.query(question, top_k=top_k)
-        
+
         # Convert to retriever format
         results = self._convert_faiss_results_to_retriever_format(raw_results)
-        
-        # Filter by minimum score if specified
-        if min_score > 0.0:
-            results = [r for r in results if r['similarity_score'] >= min_score]
-        
+
         if not results:
-            answer = "No relevant context found."
+            answer = "I couldn't find relevant information in the company documents for your question. Please try rephrasing, or ask about HR policies, leave, benefits, or other company topics."
             sources = []
-            context = ""
         else:
             # Build context from retrieved documents
             context = "\n\n".join([doc['content'] for doc in results])
-            
+
             # Extract sources with metadata
             sources = [{
                 'source': doc['metadata'].get('source_file', doc['metadata'].get('source', 'unknown')),
@@ -146,56 +177,88 @@ class AdvancedRAGPipeline:
                 'score': doc['similarity_score'],
                 'preview': doc['content'][:120] + '...' if len(doc['content']) > 120 else doc['content']
             } for doc in results]
-            
-            # Create prompt - request DETAILED answers with emphasis on numbers/data
-            prompt = f"""Use the following context to answer the question in detail. Provide a comprehensive answer with all relevant information.
 
-IMPORTANT: If the context contains numbers, statistics, percentages, dates, amounts, or structured data (tables/matrices), ALWAYS include them in your answer. Prioritize specific numerical details.
+            # Build conversation history block for the prompt
+            history_block = ""
+            if recent_history:
+                history_lines = []
+                for turn in recent_history:
+                    role = "User" if turn.get("role") == "user" else "Assistant"
+                    history_lines.append(f"{role}: {turn.get('content', '').strip()}")
+                history_block = "Conversation so far:\n" + "\n".join(history_lines) + "\n\n"
 
-Context:
+            # Create prompt with optional conversation context
+            prompt = f"""You are a helpful HR and company policy assistant. Use the context below to answer the question accurately and in detail.
+
+IMPORTANT: If the context contains numbers, statistics, percentages, dates, or amounts, ALWAYS include them in your answer.
+
+{history_block}Context from company documents:
 {context}
 
-Question: {question}
+Current question: {question}
 
-Answer (provide a detailed response with all relevant numbers and data):"""
-            
-            # Optional streaming (demonstration - prints prompt in chunks)
+Answer (detailed, using the context above):"""
+
             if stream:
                 print("\n[STREAMING] Generating response...")
                 for i in range(0, len(prompt), 80):
                     print(prompt[i:i+80], end='', flush=True)
-                    time.sleep(0.02)  # Reduced sleep time for faster streaming
+                    time.sleep(0.02)
                 print("\n")
-            
-            # Generate answer using LLM
+
             response = self.llm.invoke([prompt])
             answer = response.content
-        
-        # Add citations to answer
-        citations = [f"[{i+1}] {src['source']} (page {src['page']})" for i, src in enumerate(sources)]
-        answer_with_citations = answer + "\n\nCitations:\n" + "\n".join(citations) if citations else answer
-        
-        # Optional summarization
+
+        # --- Smart citations: only add if answer is substantive and from documents ---
+        answer_with_citations = answer
+        is_substantive = (
+            sources
+            and len(answer) > 80
+            and not answer.startswith("I couldn't find")
+        )
+        if is_substantive:
+            top_source = sources[0]  # Only cite the top/most relevant source
+            citation_line = f"\n\nCitation:\n[1] {top_source['source']} (page {top_source['page']})"
+            answer_with_citations = answer + citation_line
+
+        # --- Summarization ---
         summary = None
-        if summarize and answer and answer != "No relevant context found.":
-            summary_prompt = f"Summarize the following answer in 2 sentences:\n{answer}"
+        if summarize and sources and len(answer) > 80:
+            summary_prompt = f"Provide a concise summary of the following answer in 3-4 sentences, highlighting the key points:\n{answer}"
             summary_resp = self.llm.invoke([summary_prompt])
             summary = summary_resp.content
-        
-        # Store in query history
-        self.history.append({
-            'question': question,
-            'answer': answer,
-            'sources': sources,
-            'summary': summary
-        })
-        
-        # Return comprehensive result
+
+        # --- Generate follow-up questions (only for substantive answers) ---
+        follow_up_questions = []
+        if is_substantive:
+            followup_prompt = f"""Based on this Q&A about company policies, generate exactly 2 short follow-up questions the user might ask next.
+Output ONLY the questions as a numbered list (1. ... 2. ...), nothing else.
+
+Q: {question}
+A: {answer[:400]}"""
+            try:
+                followup_resp = self.llm.invoke([followup_prompt])
+                # Parse numbered list: "1. Question" → extract just the question text
+                for line in followup_resp.content.strip().split('\n'):
+                    line = line.strip()
+                    # Match lines like "1. ..." or "1) ..."
+                    import re
+                    match = re.match(r'^\d+[.)\s]+(.+)$', line)
+                    if match:
+                        follow_up_questions.append(match.group(1).strip())
+                follow_up_questions = follow_up_questions[:2]  # cap at 2
+            except Exception:
+                follow_up_questions = []
+
+        # Store in history
+        self.history.append({'question': question, 'answer': answer, 'sources': sources, 'summary': summary})
+
         return {
             'question': question,
             'answer': answer_with_citations,
             'sources': sources,
             'summary': summary,
+            'follow_up_questions': follow_up_questions,
             'history': self.history
         }
     
