@@ -9,7 +9,7 @@ load_dotenv()
 
 class RAGSearch:
     """Basic RAG search implementation with simple summarization."""
-    def __init__(self, persist_dir: str = "faiss_store", embedding_model: str = "all-MiniLM-L6-v2", llm_model: str = "llama-3.1-8b-instant"):
+    def __init__(self, persist_dir: str = "faiss_store", embedding_model: str = "paraphrase-MiniLM-L3-v2", llm_model: str = "llama-3.1-8b-instant"):
         self.vectorstore = FaissVectorStore(persist_dir, embedding_model)
         # Load or build vectorstore
         faiss_path = os.path.join(persist_dir, "faiss.index")
@@ -47,7 +47,7 @@ class AdvancedRAGPipeline:
     - Optional answer summarization
     """
     
-    def __init__(self, persist_dir: str = "faiss_store", embedding_model: str = "all-MiniLM-L6-v2", llm_model: str = "llama-3.1-8b-instant"):
+    def __init__(self, persist_dir: str = "faiss_store", embedding_model: str = "paraphrase-MiniLM-L3-v2", llm_model: str = "llama-3.1-8b-instant"):
         """
         Initialize the Advanced RAG Pipeline.
         
