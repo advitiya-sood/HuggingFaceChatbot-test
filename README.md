@@ -332,6 +332,8 @@ CORS_ORIGINS="http://localhost:5173,http://localhost:3000"
 
 #### Add Your Documents
 
+> **Important:** If you are starting fresh and do not already have a pre-built vector database (`faiss_store/` folder), you must manually create a folder named `data/` here and place your company PDFs inside it. The backend will automatically convert them into a vector database when it first starts up.
+
 Drop your company documents into the `data/` folder:
 
 ```
