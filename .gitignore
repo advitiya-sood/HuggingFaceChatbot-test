@@ -21,8 +21,7 @@ chroma_db/
 data/vector_store/
 *.db
 *.sqlite
-# NOTE: PDFs in data/ ARE tracked so Render can build the index
-
+data/
 
 
 # Jupyter Notebook Checkpoints
