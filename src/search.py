@@ -31,7 +31,17 @@ class RAGSearch:
         context = "\n\n".join(texts)
         if not context:
             return "No relevant documents found."
-        prompt = f"""Summarize the following context for the query: '{query}'\n\nContext:\n{context}\n\nSummary:"""
+        prompt = f"""You are a helpful HR and company policy assistant.
+Only use the following context to answer the query. If the context does not contain the answer, or if the query is unrelated to company policies, documentation, or HR topics (like asking for the weather or generally expressing opinions), reply with exactly: "I am a company assistant and can only answer questions related to company policies and documentation."
+Do not express personal opinions.
+
+Context:
+{context}
+
+Query:
+'{query}'
+
+Summary:"""
         response = self.llm.invoke([prompt])
         return response.content
 
@@ -126,7 +136,7 @@ class AdvancedRAGPipeline:
         """Generate a friendly response for out-of-scope questions."""
         prompt = f"""You are a helpful HR/company policy assistant. The user said: "{question}"
 
-This is a greeting or general question, not a policy query. Respond briefly and naturally, and let them know you can help with company policies, HR documents, leave policies, benefits, or any document-related questions."""
+This is a greeting. Respond briefly and naturally, and let them know you can help with company policies, HR documents, leave policies, benefits, or any document-related questions. Do not express personal opinions or answer general knowledge questions."""
         response = self.llm.invoke([prompt])
         return response.content
 
@@ -188,9 +198,15 @@ This is a greeting or general question, not a policy query. Respond briefly and 
                 history_block = "Conversation so far:\n" + "\n".join(history_lines) + "\n\n"
 
             # Create prompt with optional conversation context
-            prompt = f"""You are a helpful HR and company policy assistant. Use the context below to answer the question accurately and in detail.
+            prompt = f"""You are a helpful HR and company policy assistant strictly answering based on provided context.
 
-IMPORTANT: If the context contains numbers, statistics, percentages, dates, or amounts, ALWAYS include them in your answer.
+Use the context below to answer the question accurately and in detail.
+
+CRITICAL INSTRUCTIONS:
+1. ONLY answer based on the provided "Context from company documents".
+2. If the context does not contain the answer, or if the user asks an off-topic question (e.g., about the weather, general programming knowledge, etc.), reply exactly with: "I am a company assistant and can only answer questions related to company policies and documentation."
+3. DO NOT express personal opinions or make assumptions. Keep an objective tone.
+4. If the context contains numbers, statistics, percentages, dates, or amounts, ALWAYS include them in your answer.
 
 {history_block}Context from company documents:
 {context}
