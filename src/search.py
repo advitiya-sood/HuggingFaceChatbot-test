@@ -126,9 +126,9 @@ class AdvancedRAGPipeline:
         # Exact or near-exact match with common phrases
         if q in self.OUT_OF_SCOPE_PATTERNS:
             return True
-        # Very short questions (1-2 words) that aren't domain queries
+        # Very short questions (1 word) that aren't domain queries
         words = q.split()
-        if len(words) <= 2 and not any(kw in q for kw in ["leave", "policy", "salary", "hr", "ceo", "benefit", "vacation", "medical", "bonus"]):
+        if len(words) <= 1 and not any(kw in q for kw in ["leave", "policy", "salary", "hr", "ceo", "benefit", "vacation", "medical", "bonus"]):
             return True
         return False
 
@@ -136,7 +136,9 @@ class AdvancedRAGPipeline:
         """Generate a friendly response for out-of-scope questions."""
         prompt = f"""You are a helpful HR/company policy assistant. The user said: "{question}"
 
-This is a greeting. Respond briefly and naturally, and let them know you can help with company policies, HR documents, leave policies, benefits, or any document-related questions. Do not express personal opinions or answer general knowledge questions."""
+This is a greeting or a query that is too short. Respond briefly and naturally, and let them know you can help with company policies, HR documents, leave policies, benefits, or any document-related questions. 
+
+Also, explicitly mention that for best results, they should ask a full question or use a phrase that is at least 2 words long. Do not express personal opinions or answer general knowledge questions."""
         response = self.llm.invoke([prompt])
         return response.content
 
@@ -231,11 +233,27 @@ Answer (detailed, using the context above):"""
             sources
             and len(answer) > 80
             and not answer.startswith("I couldn't find")
+            and not answer.startswith("I am a company assistant")
         )
         if is_substantive:
-            top_source = sources[0]  # Only cite the top/most relevant source
-            citation_line = f"\n\nCitation:\n[1] {top_source['source']} (page {top_source['page']})"
-            answer_with_citations = answer + citation_line
+            unique_sources = []
+            seen = set()
+            for s in sources:
+                identifier = f"{s['source']}_{s['page']}"
+                if identifier not in seen:
+                    seen.add(identifier)
+                    unique_sources.append(s)
+                if len(unique_sources) >= 2:
+                    break
+                    
+            citation_lines = ["\n\nCitations:"]
+            for i, src in enumerate(unique_sources, 1):
+                citation_lines.append(f"[{i}] {src['source']} (page {src['page']})")
+                
+            answer_with_citations = answer + "\n".join(citation_lines)
+            
+            # Mutate sources array so frontend tooltips map precisely to these cited items
+            sources = unique_sources
 
         # --- Summarization ---
         summary = None
