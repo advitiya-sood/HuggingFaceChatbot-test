@@ -1,4 +1,5 @@
 import os
+import asyncio
 from dotenv import load_dotenv
 from src.vectorstore import FaissVectorStore
 from langchain_groq import ChatGroq
@@ -24,7 +25,7 @@ class RAGSearch:
         self.llm = ChatGroq(groq_api_key=groq_api_key, model_name=llm_model)
         print(f"[INFO] Groq LLM initialized: {llm_model}")
 
-    def search_and_summarize(self, query: str, top_k: int = 5) -> str:
+    async def asearch_and_summarize(self, query: str, top_k: int = 5) -> str:
         """Simple search and summarize - returns only the answer text."""
         results = self.vectorstore.query(query, top_k=top_k)
         texts = [r["metadata"].get("text", "") for r in results if r["metadata"]]
@@ -42,7 +43,7 @@ Query:
 '{query}'
 
 Summary:"""
-        response = self.llm.invoke([prompt])
+        response = await self.llm.ainvoke([prompt])
         return response.content
 
 
@@ -132,17 +133,17 @@ class AdvancedRAGPipeline:
             return True
         return False
 
-    def _get_out_of_scope_response(self, question: str) -> str:
+    async def _aget_out_of_scope_response(self, question: str) -> str:
         """Generate a friendly response for out-of-scope questions."""
         prompt = f"""You are a helpful HR/company policy assistant. The user said: "{question}"
 
 This is a greeting or a query that is too short. Respond briefly and naturally, and let them know you can help with company policies, HR documents, leave policies, benefits, or any document-related questions. 
 
 Also, explicitly mention that for best results, they should ask a full question or use a phrase that is at least 2 words long. Do not express personal opinions or answer general knowledge questions."""
-        response = self.llm.invoke([prompt])
+        response = await self.llm.ainvoke([prompt])
         return response.content
 
-    def query(self, question: str, top_k: int = 5, min_score: float = 0.0, stream: bool = False, summarize: bool = False, conversation_history: list = None) -> Dict[str, Any]:
+    async def aquery(self, question: str, top_k: int = 5, min_score: float = 0.0, stream: bool = False, summarize: bool = False, conversation_history: list = None) -> Dict[str, Any]:
         """
         Execute an advanced RAG query with conversation memory and relevance filtering.
 
@@ -165,7 +166,7 @@ Also, explicitly mention that for best results, they should ask a full question 
 
         # --- Out-of-scope detection ---
         if self._is_out_of_scope(question):
-            answer = self._get_out_of_scope_response(question)
+            answer = await self._aget_out_of_scope_response(question)
             self.history.append({'question': question, 'answer': answer, 'sources': [], 'summary': None})
             return {'question': question, 'answer': answer, 'sources': [], 'summary': None, 'history': self.history}
 
@@ -221,10 +222,10 @@ Answer (detailed, using the context above):"""
                 print("\n[STREAMING] Generating response...")
                 for i in range(0, len(prompt), 80):
                     print(prompt[i:i+80], end='', flush=True)
-                    time.sleep(0.02)
+                    await asyncio.sleep(0.02)
                 print("\n")
 
-            response = self.llm.invoke([prompt])
+            response = await self.llm.ainvoke([prompt])
             answer = response.content
 
         # --- Smart citations: only add if answer is substantive and from documents ---
@@ -255,34 +256,49 @@ Answer (detailed, using the context above):"""
             # Mutate sources array so frontend tooltips map precisely to these cited items
             sources = unique_sources
 
-        # --- Summarization ---
+        # --- Summarization and Follow-ups (Parallel Async) ---
         summary = None
-        if summarize and sources and len(answer) > 80:
-            summary_prompt = f"Provide a concise summary of the following answer in 3-4 sentences, highlighting the key points:\n{answer}"
-            summary_resp = self.llm.invoke([summary_prompt])
-            summary = summary_resp.content
-
-        # --- Generate follow-up questions (only for substantive answers) ---
         follow_up_questions = []
-        if is_substantive:
+
+        async def _generate_summary():
+            summary_prompt = f"Provide a concise summary of the following answer in 3-4 sentences, highlighting the key points:\n{answer}"
+            summary_resp = await self.llm.ainvoke([summary_prompt])
+            return summary_resp.content
+
+        async def _generate_followups():
             followup_prompt = f"""Based on this Q&A about company policies, generate exactly 2 short follow-up questions the user might ask next.
 Output ONLY the questions as a numbered list (1. ... 2. ...), nothing else.
 
 Q: {question}
 A: {answer[:400]}"""
             try:
-                followup_resp = self.llm.invoke([followup_prompt])
-                # Parse numbered list: "1. Question" → extract just the question text
+                followup_resp = await self.llm.ainvoke([followup_prompt])
+                questions = []
                 for line in followup_resp.content.strip().split('\n'):
                     line = line.strip()
-                    # Match lines like "1. ..." or "1) ..."
                     import re
                     match = re.match(r'^\d+[.)\s]+(.+)$', line)
                     if match:
-                        follow_up_questions.append(match.group(1).strip())
-                follow_up_questions = follow_up_questions[:2]  # cap at 2
+                        questions.append(match.group(1).strip())
+                return questions[:2]
             except Exception:
-                follow_up_questions = []
+                return []
+
+        tasks = []
+        if summarize and sources and len(answer) > 80:
+            tasks.append(_generate_summary())
+        else:
+            tasks.append(asyncio.sleep(0))
+            
+        if is_substantive:
+            tasks.append(_generate_followups())
+        else:
+            tasks.append(asyncio.sleep(0))
+            
+        if tasks:
+            results = await asyncio.gather(*tasks)
+            summary = results[0] if summarize and sources and len(answer) > 80 else None
+            follow_up_questions = results[1] if is_substantive else []
 
         # Store in history
         self.history.append({'question': question, 'answer': answer, 'sources': sources, 'summary': summary})
