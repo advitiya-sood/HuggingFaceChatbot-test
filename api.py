@@ -178,7 +178,7 @@ async def query_basic(request: Request, body: BasicQueryRequest):
         logger.info(f"Basic query received: {body.question}")
         
         rag = get_basic_rag()
-        answer = rag.search_and_summarize(body.question, top_k=body.top_k)
+        answer = await rag.asearch_and_summarize(body.question, top_k=body.top_k)
         
         return {
             "question": body.question,
@@ -207,7 +207,7 @@ async def query_advanced(request: Request, body: AdvancedQueryRequest):
         logger.info(f"Advanced query received: {body.question}")
         
         rag = get_advanced_rag()
-        result = rag.query(
+        result = await rag.aquery(
             question=body.question,
             top_k=body.top_k,
             min_score=body.min_score,
